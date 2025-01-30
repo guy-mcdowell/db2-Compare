@@ -9,6 +9,7 @@ This tool helps database administrators and developers identify structural diffe
 - Stored Procedures
 - Triggers
 - Functions
+- Views
 
 For each category, the tool generates separate log files showing:
 - New objects (present in modified DB but not in baseline)
@@ -95,6 +96,12 @@ The script generates several log files in the output directory:
 - `functions_dropped.log`: Details of dropped functions
 - `functions_modified.log`: Details of modified functions
 
+### Views
+- `views_summary.log`: Overview of all view changes
+- `views_new.log`: Details of new views
+- `views_dropped.log`: Details of dropped views
+- `views_modified.log`: Details of modified views
+
 ## Comparison Details
 
 ### Table Comparisons Include:
@@ -129,11 +136,18 @@ The script generates several log files in the output directory:
 - Null call behavior
 - Full function definition
 
+### View Comparisons Include:
+- Full view definition (SELECT statement)
+- Validity status
+- Check option settings
+- Read-only status
+- View remarks
+
 ## Limitations
 
 - The tool only compares structural differences, not data content
 - System schemas are excluded from comparison
-- Some DB2 object types (like sequences, views) are not currently compared
+- Some DB2 object types (like sequences) are not currently compared
 
 ## Error Handling
 

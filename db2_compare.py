@@ -942,6 +942,166 @@ class Db2Comparator:
                     file.write(f"      From: {baseline_func[key]}\n")
                     file.write(f"      To: {modified_func[key]}\n")
 
+    def compare_views(self):
+        """Compare views between databases"""
+        self.logger.info("Starting view comparison")
+        
+        view_query = """
+        SELECT 
+            v.VIEWSCHEMA,
+            v.VIEWNAME,
+            v.TEXT as VIEW_TEXT,
+            v.VALID,
+            v.VIEWCHECK,
+            v.READONLY
+        FROM SYSCAT.VIEWS v
+        WHERE v.VIEWSCHEMA NOT LIKE 'SYS%'
+        AND v.VIEWSCHEMA NOT IN ('NULLID', 'SQLJ', 'SYSCAT', 'SYSIBM', 'SYSIBMADM', 'SYSSTAT')
+        ORDER BY v.VIEWSCHEMA, v.VIEWNAME
+        """
+        
+        self.logger.info("Fetching views from baseline database")
+        baseline_views = self._fetch_all(self.baseline_conn, view_query)
+        self.logger.info(f"Found {len(baseline_views)} views in baseline database")
+        
+        self.logger.info("Fetching views from modified database")
+        modified_views = self._fetch_all(self.modified_conn, view_query)
+        self.logger.info(f"Found {len(modified_views)} views in modified database")
+        
+        # Group by schema.view
+        baseline_dict = self._group_by_view(baseline_views)
+        modified_dict = self._group_by_view(modified_views)
+        
+        # Create separate log files for each category
+        summary_file = self.output_dir / 'views_summary.log'
+        new_views_file = self.output_dir / 'views_new.log'
+        dropped_views_file = self.output_dir / 'views_dropped.log'
+        modified_views_file = self.output_dir / 'views_modified.log'
+        
+        # Find differences
+        new_views = set(modified_dict.keys()) - set(baseline_dict.keys())
+        dropped_views = set(baseline_dict.keys()) - set(modified_dict.keys())
+        modified_views = self._find_modified_views(baseline_dict, modified_dict)
+        
+        # Write summary
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            f.write("=== View Comparison Summary ===\n")
+            f.write(f"New views: {len(new_views)}\n")
+            f.write(f"Dropped views: {len(dropped_views)}\n")
+            f.write(f"Modified views: {len(modified_views)}\n\n")
+            
+            if new_views:
+                f.write("\nNew Views:\n")
+                for view in sorted(new_views):
+                    f.write(f"  {view}\n")
+            
+            if dropped_views:
+                f.write("\nDropped Views:\n")
+                for view in sorted(dropped_views):
+                    f.write(f"  {view}\n")
+            
+            if modified_views:
+                f.write("\nModified Views:\n")
+                for view in sorted(modified_views):
+                    f.write(f"  {view}\n")
+        
+        # Write new views
+        if new_views:
+            self.logger.info(f"Writing {len(new_views)} new views to {new_views_file}")
+            with open(new_views_file, 'w', encoding='utf-8') as f:
+                f.write("=== New Views ===\n")
+                for view in sorted(new_views):
+                    f.write(f"\n{view}:\n")
+                    self._write_view_definition(f, modified_dict[view])
+        
+        # Write dropped views
+        if dropped_views:
+            self.logger.info(f"Writing {len(dropped_views)} dropped views to {dropped_views_file}")
+            with open(dropped_views_file, 'w', encoding='utf-8') as f:
+                f.write("=== Dropped Views ===\n")
+                for view in sorted(dropped_views):
+                    f.write(f"\n{view}:\n")
+                    self._write_view_definition(f, baseline_dict[view])
+        
+        # Write modified views
+        if modified_views:
+            self.logger.info(f"Writing {len(modified_views)} modified views to {modified_views_file}")
+            with open(modified_views_file, 'w', encoding='utf-8') as f:
+                f.write("=== Modified Views ===\n")
+                for view in sorted(modified_views):
+                    f.write(f"\n{view}:\n")
+                    self._write_view_differences(f, baseline_dict[view], modified_dict[view])
+        
+        self.logger.info("View comparison completed")
+
+    def _group_by_view(self, views: List[Dict]) -> Dict:
+        """Group views by schema.name"""
+        result = {}
+        for view in views:
+            key = f"{view['viewschema']}.{view['viewname']}"
+            result[key] = view
+        return result
+
+    def _find_modified_views(self, baseline: Dict, modified: Dict) -> List[str]:
+        """Find views that exist in both databases but have different definitions"""
+        modified_views = []
+        common_views = set(baseline.keys()) & set(modified.keys())
+        
+        for view in common_views:
+            if self._view_definitions_differ(baseline[view], modified[view]):
+                modified_views.append(view)
+        
+        return modified_views
+
+    def _view_definitions_differ(self, baseline_view: Dict, modified_view: Dict) -> bool:
+        """Compare two view definitions to determine if they differ"""
+        compare_keys = [
+            'view_text', 'valid', 'viewcheck', 'readonly'
+        ]
+        
+        differences = []
+        for key in compare_keys:
+            if baseline_view[key] != modified_view[key]:
+                differences.append(f"{key}: Changed")
+                self.logger.debug(f"View difference in {key}:")
+                self.logger.debug(f"Baseline: {baseline_view[key]}")
+                self.logger.debug(f"Modified: {modified_view[key]}")
+        
+        return bool(differences)
+
+    def _write_view_definition(self, file, view: Dict):
+        """Write a view's definition to the log file"""
+        file.write(f"  Valid: {view['valid']}\n")
+        file.write(f"  Check Option: {view['viewcheck']}\n")
+        file.write(f"  Read Only: {view['readonly']}\n")
+        file.write("\n  Definition:\n")
+        if view['view_text']:
+            # Handle potential None values and encode special characters
+            text = view['view_text'] or ''
+            file.write(f"{text}\n")
+
+    def _write_view_differences(self, file, baseline_view: Dict, modified_view: Dict):
+        """Write detailed differences between two view versions"""
+        file.write("  Baseline:\n")
+        self._write_view_definition(file, baseline_view)
+        file.write("\n  Modified:\n")
+        self._write_view_definition(file, modified_view)
+        
+        # Show specific differences
+        file.write("\n  Changes:\n")
+        compare_keys = [
+            'view_text', 'valid', 'viewcheck', 'readonly'
+        ]
+        
+        for key in compare_keys:
+            if baseline_view[key] != modified_view[key]:
+                file.write(f"    * {key} changed\n")
+                if key in ['view_text']:
+                    file.write("      (See full definitions above)\n")
+                else:
+                    file.write(f"      From: {baseline_view[key]}\n")
+                    file.write(f"      To: {modified_view[key]}\n")
+
 def main():
     parser = argparse.ArgumentParser(description='Compare two DB2 database structures')
     parser.add_argument('--config', required=True, help='Path to configuration file')
@@ -968,6 +1128,7 @@ def main():
         comparator.compare_procedures()
         comparator.compare_triggers()
         comparator.compare_functions()
+        comparator.compare_views()
         # Add other comparison methods here
     finally:
         comparator.close()
