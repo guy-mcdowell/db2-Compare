@@ -4,13 +4,13 @@
         "port": 50000,
         "database": "TM24SP3",
         "username": "db2admin",
-        "password": "M@dd0x01"
+        "password": "password"
     },
     "modified": {
         "host": "localhost",
         "port": 50000,
         "database": "TEST",
         "username": "db2admin",
-        "password": "M@dd0x01"
+        "password": "password"
     }
 } 
