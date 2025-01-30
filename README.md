@@ -146,7 +146,3 @@ The script includes error handling for:
 ## Contributing
 
 Feel free to submit issues and enhancement requests!
-
-## License
-
-[Your chosen license]
